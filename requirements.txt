@@ -1,0 +1,10 @@
+# PDF Processing
+pymupdf==1.27.1
+
+# AI & LLM
+openai==1.63.2
+python-dotenv==1.2.1
+
+# Vector Search & Math
+faiss-cpu==1.13.2
+numpy==1.26.4
