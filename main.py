@@ -4,49 +4,52 @@ Orchestrates the loading, indexing, and auditing of EdTech reports.
 """
 
 import os
+import json
+from dotenv import load_dotenv
 from src.loader import load_all_documents
 from src.vector_store import VectorIndex
 from src.auditor import ComplianceAuditor
 
+load_dotenv()
+
 
 def run_pipeline():
-    # 1. Setup Paths
     base_dir = os.path.dirname(os.path.abspath(__file__))
     data_path = os.path.join(base_dir, "data")
 
     print("--- Starting ReportCheckAI Pipeline ---")
 
-    # 2. Load Documents
     lib = load_all_documents(data_path)
     if not lib["rules"] or not lib["reports"]:
         print("Error: Missing data. Please run generate_data.py first.")
         return
 
-    # 3. Build Vector Store (FAISS + OpenAI)
     print("Building FAISS index for compliance rules...")
     v_store = VectorIndex()
     v_store.build_index(lib)
 
-    # 4. Initialize Auditor
     auditor = ComplianceAuditor(v_store)
 
-    # 5. Process and Audit each Report
     print(f"\nProceeding to audit {len(lib['reports'])} reports...\n")
-    print(f"{'FILENAME':<30} | {'STATUS':<10} | {'SUMMARY'}")
-    print("-" * 80)
+    print(f"{'FILENAME':<35} | {'STATUS':<10} | {'SUMMARY'}")
+    print("-" * 90)
 
     for report in lib["reports"]:
-        # Run the audit
-        raw_result = auditor.audit_report(report['content'])
+        if report["content"] is None:
+            print(f"{report['filename']:<35} | {'ERROR':<10} | Could not extract PDF text.")
+            continue
 
-        # Parse the JSON string from the auditor
-        import json
-        res = json.loads(raw_result)
+        raw_result = auditor.audit_report(report["content"])
 
-        # Display clean summary
+        try:
+            res = json.loads(raw_result)
+        except json.JSONDecodeError:
+            print(f"{report['filename']:<35} | {'ERROR':<10} | LLM returned malformed JSON.")
+            continue
+
         status = res.get("overall_status", "N/A")
         summary = res.get("summary", "No summary provided.")
-        print(f"{report['filename']:<30} | {status:<10} | {summary}")
+        print(f"{report['filename']:<35} | {status:<10} | {summary}")
 
 
 if __name__ == "__main__":
