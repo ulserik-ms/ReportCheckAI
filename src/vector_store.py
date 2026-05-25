@@ -3,71 +3,86 @@ Vector Store Module for ReportCheckAI.
 Uses FAISS for local vector indexing and OpenAI for embeddings.
 """
 
+import json
 import os
+
 import faiss
 import numpy as np
+from dotenv import load_dotenv
 from openai import OpenAI
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+from src.config import EMBEDDING_MODEL, FAISS_DOCS_PATH, FAISS_INDEX_PATH
+
+load_dotenv()
 
 
 class VectorIndex:
-    def __init__(self, embedding_model="text-embedding-3-small"):
+    def __init__(self, embedding_model=EMBEDDING_MODEL):
         self.model = embedding_model
         self.index = None
-        self.documents = []  # To map index back to original text
+        self.documents = []
+        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     def get_embedding(self, text):
-        """Generates a vector for the given text."""
         text = text.replace("\n", " ")
-        return client.embeddings.create(input=[text], model=self.model).data[0].embedding
+        return self.client.embeddings.create(input=[text], model=self.model).data[0].embedding
 
-    def build_index(self, library):
-        """
-        Embeds the compliance rules and builds a FAISS index.
-        """
-        all_rules = []
-        for filename, content in library["rules"].items():
-            all_rules.append(content)
+    def _chunk_text(self, text, min_length=60):
+        """Split a document into paragraph-level chunks, discarding very short ones."""
+        chunks = [c.strip() for c in text.split("\n\n") if len(c.strip()) >= min_length]
+        return chunks if chunks else [text]
 
-        if not all_rules:
+    def build_index(self, library, index_path=FAISS_INDEX_PATH, docs_path=FAISS_DOCS_PATH):
+        """Embeds each rule chunk individually and builds a FAISS index."""
+        all_chunks = []
+        for content in library["rules"].values():
+            if content:
+                all_chunks.extend(self._chunk_text(content))
+
+        if not all_chunks:
             return
 
-        self.documents = all_rules
+        self.documents = all_chunks
 
-        # 1. Generate embeddings
-        embeddings = [self.get_embedding(rule) for rule in all_rules]
-        embeddings_np = np.array(embeddings).astype('float32')
+        embeddings = [self.get_embedding(chunk) for chunk in all_chunks]
+        embeddings_np = np.array(embeddings).astype("float32")
 
-        # 2. Initialize FAISS index (using L2 distance)
         dimension = embeddings_np.shape[1]
         self.index = faiss.IndexFlatL2(dimension)
-
-        # 3. Add vectors to the index
         self.index.add(embeddings_np)
-        print(f"FAISS index built with {self.index.ntotal} rules.")
 
-    def search(self, query, n_results=1):
-        """Finds the most semantically similar rule for a query."""
-        query_vector = np.array([self.get_embedding(query)]).astype('float32')
+        self.save(index_path, docs_path)
+        print(f"FAISS index built with {self.index.ntotal} rule chunks.")
+
+    def search(self, query, n_results=2):
+        """Returns the top-n most semantically similar rule chunks for a query."""
+        query_vector = np.array([self.get_embedding(query)]).astype("float32")
         distances, indices = self.index.search(query_vector, n_results)
-
-        # Return the original text of the best match
         return [self.documents[i] for i in indices[0] if i != -1]
 
+    def save(self, index_path=FAISS_INDEX_PATH, docs_path=FAISS_DOCS_PATH):
+        faiss.write_index(self.index, index_path)
+        with open(docs_path, "w") as f:
+            json.dump(self.documents, f)
 
-# Quick test logic
+    def load(self, index_path=FAISS_INDEX_PATH, docs_path=FAISS_DOCS_PATH):
+        """Loads a previously saved FAISS index from disk. Returns True on success."""
+        if not os.path.exists(index_path) or not os.path.exists(docs_path):
+            return False
+        self.index = faiss.read_index(index_path)
+        with open(docs_path) as f:
+            self.documents = json.load(f)
+        return True
+
+
 if __name__ == "__main__":
-    from loader import load_all_documents
+    from src.loader import load_all_documents
 
-    # Setup paths
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     lib = load_all_documents(os.path.join(project_root, "data"))
 
-    # Initialize and Build
     v_store = VectorIndex()
     v_store.build_index(lib)
 
-    # Test Search
     match = v_store.search("What is the rule for expert identity and contract ID?")
-    print(f"\nTop Match found: {match[0][:100]}...")
+    print(f"\nTop match: {match[0][:200]}...")

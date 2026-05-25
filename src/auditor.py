@@ -3,8 +3,23 @@ Auditor Module for ReportCheckAI.
 Performs the actual compliance check using RAG (Retrieved Rules + LLM).
 """
 
-from openai import OpenAI
 import os
+
+from dotenv import load_dotenv
+from openai import OpenAI
+
+from src.config import CHAT_MODEL
+
+load_dotenv()
+
+_AUDIT_QUERIES = [
+    "expert identity full name institution affiliation Contract ID",
+    "date format DD/MM/YYYY requirement",
+    "references textbooks scientific sources verification",
+    "corrections mistakes inconsistencies detailed list",
+    "subject specification Physics Chemistry Biology Math",
+    "recommendations pedagogical advice improving content",
+]
 
 
 class ComplianceAuditor:
@@ -12,18 +27,30 @@ class ComplianceAuditor:
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.vector_store = vector_store
 
-    def audit_report(self, report_content):
+    def _retrieve_rules(self, n_results=2):
         """
-        Retrieves relevant rules and checks the report against them.
+        Runs one targeted search per compliance dimension and deduplicates results.
+        This ensures every rule area is represented in the context, not just the
+        ones that happen to be closest to the full report embedding.
         """
-        # 1. Retrieve the rules from FAISS (RAG step)
-        # We query the vector store using the report's content to find applicable rules
-        relevant_rules = self.vector_store.search(report_content, n_results=1)
-        rules_context = relevant_rules[0] if relevant_rules else "No specific rules found."
+        seen = set()
+        chunks = []
+        for query in _AUDIT_QUERIES:
+            for chunk in self.vector_store.search(query, n_results=n_results):
+                if chunk not in seen:
+                    seen.add(chunk)
+                    chunks.append(chunk)
+        return chunks
 
-        # 2. Construct the Audit Prompt
+    def audit_report(self, report_content):
+        if not report_content:
+            raise ValueError("Report content is empty or None.")
+
+        rules_chunks = self._retrieve_rules()
+        rules_context = "\n\n---\n\n".join(rules_chunks) if rules_chunks else "No specific rules found."
+
         prompt = f"""
-        You are an automated Compliance Auditor for an EdTech company. 
+        You are an automated Compliance Auditor for an EdTech company.
         Your task is to verify if a 'Content Review Report' follows the official 'Compliance Handbook'.
 
         ### OFFICIAL COMPLIANCE RULES:
@@ -45,34 +72,30 @@ class ComplianceAuditor:
         }}
         """
 
-        # 3. Call the LLM for the verdict
         response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "system", "content": "You are a strict compliance auditor."},
-                      {"role": "user", "content": prompt}],
-            response_format={"type": "json_object"}  # Ensures we get clean JSON
+            model=CHAT_MODEL,
+            messages=[
+                {"role": "system", "content": "You are a strict compliance auditor."},
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
         )
 
         return response.choices[0].message.content
 
 
 if __name__ == "__main__":
-    # Integration test with your loader and vector store
-    from loader import load_all_documents
-    from vector_store import VectorIndex
+    from src.loader import load_all_documents
+    from src.vector_store import VectorIndex
 
-    # Load data
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     lib = load_all_documents(os.path.join(project_root, "data"))
 
-    # Setup Vector Store
     v_store = VectorIndex()
     v_store.build_index(lib)
 
-    # Audit the first report
     if lib["reports"]:
         auditor = ComplianceAuditor(v_store)
         report = lib["reports"][0]
         print(f"\nAuditing: {report['filename']}...")
-        result = auditor.audit_report(report['content'])
-        print(result)
+        print(auditor.audit_report(report["content"]))
