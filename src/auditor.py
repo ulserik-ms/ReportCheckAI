@@ -5,26 +5,14 @@ Performs the actual compliance check using RAG (Retrieved Rules + LLM).
 
 import os
 
-from dotenv import load_dotenv
 from openai import OpenAI
 
-from src.config import CHAT_MODEL
-
-load_dotenv()
-
-_AUDIT_QUERIES = [
-    "expert identity full name institution affiliation Contract ID",
-    "date format DD/MM/YYYY requirement",
-    "references textbooks scientific sources verification",
-    "corrections mistakes inconsistencies detailed list",
-    "subject specification Physics Chemistry Biology Math",
-    "recommendations pedagogical advice improving content",
-]
+from src.config import AUDIT_QUERIES, CHAT_MODEL, MAX_REPORT_CHARS
 
 
 class ComplianceAuditor:
-    def __init__(self, vector_store):
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    def __init__(self, vector_store, client=None):
+        self.client = client or OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.vector_store = vector_store
 
     def _retrieve_rules(self, n_results=2):
@@ -35,7 +23,7 @@ class ComplianceAuditor:
         """
         seen = set()
         chunks = []
-        for query in _AUDIT_QUERIES:
+        for query in AUDIT_QUERIES:
             for chunk in self.vector_store.search(query, n_results=n_results):
                 if chunk not in seen:
                     seen.add(chunk)
@@ -45,6 +33,10 @@ class ComplianceAuditor:
     def audit_report(self, report_content):
         if not report_content:
             raise ValueError("Report content is empty or None.")
+
+        if len(report_content) > MAX_REPORT_CHARS:
+            print(f"  [Warning] Report truncated from {len(report_content)} to {MAX_REPORT_CHARS} chars.")
+            report_content = report_content[:MAX_REPORT_CHARS]
 
         rules_chunks = self._retrieve_rules()
         rules_context = "\n\n---\n\n".join(rules_chunks) if rules_chunks else "No specific rules found."
@@ -85,6 +77,8 @@ class ComplianceAuditor:
 
 
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()
     from src.loader import load_all_documents
     from src.vector_store import VectorIndex
 

@@ -18,10 +18,11 @@ from src.config import CHAT_MODEL
 
 load_dotenv()
 
+_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 
 def generate_text(prompt, temp=0.7):
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    response = client.chat.completions.create(
+    response = _client.chat.completions.create(
         model=CHAT_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=temp,
@@ -91,11 +92,7 @@ if __name__ == "__main__":
         grade = input_data["grades"][i]
 
         day = (i + 1) * 2
-        # Use wrong date format (YYYY/MM/DD) for the incomplete-identity scenario
-        if scenario["label"] == "fail_incomplete_id":
-            fake_date = f"2025/02/{day:02d}"
-        else:
-            fake_date = f"{day:02d}/02/2025"
+        fake_date = f"{day:02d}/02/2025"
 
         ref_list = [f"{sub}_book-{j}" for j in range(1, 3)]
 

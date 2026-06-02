@@ -8,24 +8,22 @@ import os
 
 import faiss
 import numpy as np
-from dotenv import load_dotenv
 from openai import OpenAI
 
 from src.config import EMBEDDING_MODEL, FAISS_DOCS_PATH, FAISS_INDEX_PATH
 
-load_dotenv()
-
 
 class VectorIndex:
-    def __init__(self, embedding_model=EMBEDDING_MODEL):
+    def __init__(self, embedding_model=EMBEDDING_MODEL, client=None):
         self.model = embedding_model
         self.index = None
         self.documents = []
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.client = client or OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    def get_embedding(self, text):
-        text = text.replace("\n", " ")
-        return self.client.embeddings.create(input=[text], model=self.model).data[0].embedding
+    def get_embeddings_batch(self, texts):
+        texts = [t.replace("\n", " ") for t in texts]
+        response = self.client.embeddings.create(input=texts, model=self.model)
+        return [item.embedding for item in sorted(response.data, key=lambda x: x.index)]
 
     def _chunk_text(self, text, min_length=60):
         """Split a document into paragraph-level chunks, discarding very short ones."""
@@ -44,7 +42,7 @@ class VectorIndex:
 
         self.documents = all_chunks
 
-        embeddings = [self.get_embedding(chunk) for chunk in all_chunks]
+        embeddings = self.get_embeddings_batch(all_chunks)
         embeddings_np = np.array(embeddings).astype("float32")
 
         dimension = embeddings_np.shape[1]
@@ -56,7 +54,7 @@ class VectorIndex:
 
     def search(self, query, n_results=2):
         """Returns the top-n most semantically similar rule chunks for a query."""
-        query_vector = np.array([self.get_embedding(query)]).astype("float32")
+        query_vector = np.array(self.get_embeddings_batch([query])).astype("float32")
         distances, indices = self.index.search(query_vector, n_results)
         return [self.documents[i] for i in indices[0] if i != -1]
 
@@ -76,6 +74,8 @@ class VectorIndex:
 
 
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()
     from src.loader import load_all_documents
 
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
