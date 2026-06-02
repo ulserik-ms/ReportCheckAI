@@ -1,11 +1,11 @@
 # ReportCheckAI: RAG-Powered EdTech Compliance Auditor
 
-**ReportCheckAI** is a prototype automated auditing system designed for the Science EdTech sector. 
+**ReportCheckAI** is a prototype automated auditing system designed for the Science EdTech sector.
 It leverages **Retrieval-Augmented Generation (RAG)** to verify that expert content review reports (Grades 7-9) adhere to internal compliance standards and scientific accuracy.
 
 
 ## Project Overview
-In EdTech, human experts review AI-generated educational content. To ensure these reviews are consistent and reliable, they must be audited against a "Compliance Handbook." 
+In EdTech, human experts review AI-generated educational content. To ensure these reviews are consistent and reliable, they must be audited against a "Compliance Handbook."
 
 **This project solves two main problems:**
 1. **Compliance Drift:** Ensuring auditors don't miss fields (like Contract IDs) or incorrect formats (dates/citations).
@@ -29,17 +29,28 @@ Standard LLMs can struggle with specific, evolving internal rules. This system u
 ReportCheckAI/
 ├── data/
 │   ├── reports/           # Synthetic expert reports (PDF)
-│   └── rules/             # Compliance Handbook (PDF)
+│   ├── rules/             # Compliance Handbook (PDF)
+│   ├── faiss.index        # Persisted FAISS index (auto-generated)
+│   ├── faiss_docs.json    # Persisted index documents (auto-generated)
+│   └── results.json       # Audit results from the last pipeline run
 ├── src/
+│   ├── config.py          # Central config: models, paths, audit queries
 │   ├── loader.py          # PDF text extraction
-│   ├── vector_store.py    # FAISS index and Embedding logic
+│   ├── vector_store.py    # FAISS index and embedding logic
 │   └── auditor.py         # LLM audit logic
 ├── main.py                # Pipeline orchestrator
-├── generate_data.py       # Dataset generator
+├── generate_data.py       # Synthetic dataset generator
 └── requirements.txt       # Project dependencies
 ```
 
-## **Getting Started**
+## Pipeline Behaviour
+
+1. **Load** — PDFs from `data/rules/` and `data/reports/` are extracted into plain text.
+2. **Index** — Rule chunks are embedded and stored in a FAISS index. The index is persisted to `data/faiss.index` so subsequent runs skip re-embedding entirely.
+3. **Audit** — For each report, six targeted RAG queries retrieve the most relevant rule chunks across every compliance dimension. The assembled context and report are sent to the LLM for a structured verdict.
+4. **Output** — Results are printed to the console and written to `data/results.json`.
+
+## Getting Started
 
 ### 1. Prerequisites
 You will need an OpenAI API key. Create a `.env` file in the root directory:
@@ -56,12 +67,16 @@ pip install -r requirements.txt
 ```
 
 ### 3. Usage
-First, generate the synthetic test data:
+Generate the synthetic test data (only needed once):
 ```bash
 python generate_data.py
 ```
 
-Then, run the full audit pipeline:
+Run the full audit pipeline:
 ```bash
 python main.py
 ```
+
+On first run the FAISS index is built and saved to disk. Every subsequent run loads the cached index, so no embedding calls are made for the rules — only the reports are sent to the LLM.
+
+Audit results are saved to `data/results.json` after each run for programmatic inspection.
